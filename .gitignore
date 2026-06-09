@@ -1,0 +1,19 @@
+# IDE
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual env
+venv/
+.venv/
+
+# Dot directories (don't commit user data)
+.ezproxy/
+.mitmproxy/
+
+# OS
+.DS_Store
+Thumbs.db

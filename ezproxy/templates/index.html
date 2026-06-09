@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EzProxy — HTTP History</title>
+<style>
+  :root {
+    --bg: #1e1e2e;
+    --surface: #262637;
+    --border: #3a3a4e;
+    --text: #d0d0d8;
+    --muted: #8888a0;
+    --accent: #7b93d4;
+    --green: #7ec98f;
+    --blue: #7bb4e0;
+    --yellow: #e0c070;
+    --red: #e07070;
+    --orange: #e09060;
+    --group-bg: #1f1f33;
+    --method-get: #7ec98f;
+    --method-post: #7bb4e0;
+    --method-put: #e0c070;
+    --method-delete: #e07070;
+    --method-patch: #e09060;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+
+  /* ---- toolbar ---- */
+  .toolbar {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .toolbar .title { font-weight: 700; font-size: 15px; color: var(--accent); margin-right: 12px; }
+  .toolbar input, .toolbar select, .toolbar button {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    padding: 5px 10px; border-radius: 4px; font-size: 13px;
+  }
+  .toolbar input:focus, .toolbar select:focus { outline: none; border-color: var(--accent); }
+  .toolbar button { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+  .toolbar button:hover { background: #333350; }
+  .toolbar button.danger { color: var(--red); }
+  .toolbar button.active-toggle { background: #3a5030; border-color: var(--green); color: var(--green); }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .stat { font-size: 12px; color: var(--muted); }
+  .toolbar .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 4px; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  /* ---- tree table ---- */
+  .table-wrap { flex: 1; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  thead { position: sticky; top: 0; z-index: 3; }
+  thead th {
+    background: var(--surface); padding: 8px 12px; text-align: left;
+    font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase;
+    border-bottom: 2px solid var(--border); user-select: none;
+  }
+  /* column widths */
+  thead th:nth-child(1) { width: 28px; }   /* toggle */
+  thead th:nth-child(2) { width: 45px; }   /* # */
+  thead th:nth-child(3) { width: 72px; }   /* Method */
+  thead th:nth-child(4) { width: auto; }   /* URL — takes remaining space */
+  thead th:nth-child(5) { width: 65px; }   /* Status */
+  thead th:nth-child(6) { width: 90px; }   /* Length */
+  thead th:nth-child(7) { width: 95px; }   /* Time */
+
+  /* ---- group row ---- */
+  .group-row { cursor: pointer; }
+  .group-row td {
+    padding: 6px 12px; font-size: 13px;
+    background: var(--group-bg); border-bottom: 2px solid var(--border);
+    font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .group-row:hover td { background: #2a2a42; }
+  .group-toggle {
+    display: inline-block; width: 16px; text-align: center;
+    color: var(--muted); font-size: 10px; transition: transform 0.15s;
+  }
+  .group-toggle.expanded { transform: rotate(90deg); }
+  .group-host { color: var(--accent); }
+  .group-meta { font-weight: 400; font-size: 12px; color: var(--muted); }
+
+  /* ---- child row ---- */
+  .child-row { cursor: pointer; border-bottom: 1px solid var(--border); }
+  .child-row:hover { background: #2d2d42; }
+  .child-row.selected { background: #2d2d42; border-left: 3px solid var(--accent); }
+  .child-row td { padding: 5px 12px; font-size: 13px; white-space: nowrap; }
+  .child-row td.child-url { overflow: hidden; text-overflow: ellipsis; padding-left: 16px !important; }
+  .child-row.hidden { display: none; }
+
+  /* ---- method badges ---- */
+  .method-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 11px; font-weight: 700; min-width: 50px; text-align: center;
+  }
+  .method-GET    { background: #1a3a1e; color: var(--method-get); }
+  .method-POST   { background: #1a2e3a; color: var(--method-post); }
+  .method-PUT    { background: #3a341a; color: var(--method-put); }
+  .method-DELETE { background: #3a1a1a; color: var(--method-delete); }
+  .method-PATCH  { background: #3a2a1a; color: var(--method-patch); }
+  .method-OTHER  { background: #2a2a2a; color: var(--muted); }
+
+  .status-2xx { color: var(--green); }
+  .status-3xx { color: var(--blue); }
+  .status-4xx { color: var(--yellow); }
+  .status-5xx { color: var(--red); }
+  .status-err { color: var(--red); font-style: italic; }
+
+  /* ---- detail panel ---- */
+  .detail-panel {
+    display: none;
+    background: var(--surface); border-top: 2px solid var(--accent);
+    height: 45%; min-height: 200px;
+    flex-direction: column;
+  }
+  .detail-panel.open { display: flex; }
+  .detail-tabs { display: flex; gap: 0; padding: 0 12px; border-bottom: 1px solid var(--border); }
+  .detail-tab {
+    padding: 8px 16px; font-size: 13px; cursor: pointer;
+    border: none; background: none; color: var(--muted);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .detail-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .detail-toolbar {
+    display: flex; gap: 6px; padding: 6px 12px;
+  }
+  .detail-toolbar button {
+    background: var(--bg); color: var(--accent); border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 3px; font-size: 12px; cursor: pointer;
+  }
+  .detail-toolbar button:hover { background: #333350; }
+  .detail-body { flex: 1; overflow: auto; padding: 8px 12px; }
+  .detail-body pre {
+    margin: 0; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+    color: var(--text);
+  }
+  .req-line { color: var(--method-get); font-weight: 700; }
+  .resp-line { color: var(--blue); font-weight: 700; }
+  .header-key { color: var(--orange); }
+  .header-val { color: var(--text); }
+
+  /* ---- empty state ---- */
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; color: var(--muted); gap: 10px;
+  }
+  .empty-state .icon { font-size: 48px; opacity: 0.3; }
+</style>
+</head>
+<body>
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <span class="title">🔍 EzProxy</span>
+  <input id="filter-search" type="text" placeholder="过滤 URL / 域名..." />
+  <select id="filter-method">
+    <option value="">全部方法</option>
+    <option value="GET">GET</option>
+    <option value="POST">POST</option>
+    <option value="PUT">PUT</option>
+    <option value="DELETE">DELETE</option>
+    <option value="PATCH">PATCH</option>
+    <option value="OPTIONS">OPTIONS</option>
+    <option value="HEAD">HEAD</option>
+  </select>
+  <select id="filter-status">
+    <option value="">全部状态</option>
+    <option value="2">2xx — 成功</option>
+    <option value="3">3xx — 重定向</option>
+    <option value="4">4xx — 客户端错误</option>
+    <option value="5">5xx — 服务器错误</option>
+  </select>
+  <input id="filter-host" type="text" placeholder="目标站点，如 example.com" style="width:180px" />
+  <button id="btn-scope" title="只看目标站点">🎯 只看目标</button>
+  <button id="btn-expand-all" title="展开全部">⊞ 展开</button>
+  <button id="btn-collapse-all" title="折叠全部">⊟ 折叠</button>
+  <button id="btn-refresh" title="刷新">🔄 刷新</button>
+  <button id="btn-clear" class="danger" title="清空所有记录">🗑 清空</button>
+  <span class="spacer"></span>
+  <span class="live-dot" title="代理运行中"></span>
+  <span class="stat" id="flow-count">0 条记录</span>
+</div>
+
+<!-- Flow table -->
+<div class="table-wrap" id="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th></th><th>#</th><th>方法</th><th>URL</th><th>状态</th><th>大小</th><th>耗时</th>
+      </tr>
+    </thead>
+    <tbody id="flow-tbody"></tbody>
+  </table>
+  <div class="empty-state" id="empty-state">
+    <span class="icon">📡</span>
+    <span>等待流量中…</span>
+    <span style="font-size:12px">将浏览器代理设置为 <strong>localhost:8080</strong></span>
+  </div>
+</div>
+
+<!-- Detail panel -->
+<div class="detail-panel" id="detail-panel">
+  <div class="detail-tabs">
+    <button class="detail-tab active" data-tab="request">请求</button>
+    <button class="detail-tab" data-tab="response">响应</button>
+  </div>
+  <div class="detail-toolbar">
+    <button id="btn-copy-req">📋 复制请求</button>
+    <button id="btn-curl">📤 复制为 cURL</button>
+    <button id="btn-close-detail">✕ 关闭</button>
+  </div>
+  <div class="detail-body" id="detail-body">
+    <pre id="detail-content">选择一条请求查看详情。</pre>
+  </div>
+</div>
+
+<script>
+// ---- State ----
+let flows = [];
+let total = 0;
+let selectedId = null;
+let currentTab = 'request';
+let autoRefresh = null;
+let expandedHosts = {};  // track which hosts are manually expanded (default all collapsed)
+let scopeOn = false;      // "只看目标" toggle
+
+// ---- DOM refs ----
+const tbody = document.getElementById('flow-tbody');
+const detailPanel = document.getElementById('detail-panel');
+const detailContent = document.getElementById('detail-content');
+const flowCount = document.getElementById('flow-count');
+const emptyState = document.getElementById('empty-state');
+
+// ---- API helpers ----
+async function api(path, opts = {}) {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+function buildFilters() {
+  const params = new URLSearchParams();
+  const search = document.getElementById('filter-search').value.trim();
+  const method = document.getElementById('filter-method').value;
+  const status = document.getElementById('filter-status').value;
+  if (search) params.set('search', search);
+  if (method) params.set('method', method);
+  if (status) params.set('status', status);
+  // Scope mode: filter by target host
+  if (scopeOn) {
+    const host = document.getElementById('filter-host').value.trim();
+    if (host) params.set('host', host);
+  }
+  params.set('limit', '500');
+  return '?' + params.toString();
+}
+
+// ---- Group flows by host ----
+function groupByHost(flows) {
+  const groups = new Map();
+  // Keep insertion order by tracking first-seen index
+  const order = [];
+  for (const f of flows) {
+    if (!groups.has(f.host)) {
+      groups.set(f.host, []);
+      order.push(f.host);
+    }
+    groups.get(f.host).push(f);
+  }
+  return { groups, order };
+}
+
+// ---- Rendering ----
+async function loadFlows() {
+  try {
+    const data = await api('/api/flows' + buildFilters());
+    flows = data.flows;
+    total = data.total;
+    renderTable();
+    flowCount.textContent = total + ' 条记录，' + new Set(flows.map(f => f.host)).size + ' 个主机';
+  } catch (err) {
+    console.error('加载失败:', err);
+  }
+}
+
+function renderTable() {
+  tbody.innerHTML = '';
+  if (flows.length === 0) {
+    emptyState.style.display = 'flex';
+    document.getElementById('table-wrap').querySelector('table').style.display = 'none';
+    return;
+  }
+  emptyState.style.display = 'none';
+  document.getElementById('table-wrap').querySelector('table').style.display = '';
+
+  const { groups, order } = groupByHost(flows);
+
+  order.forEach(host => {
+    const children = groups.get(host);
+    const isCollapsed = !expandedHosts[host];
+
+    // ---- Group header row ----
+    const gtr = document.createElement('tr');
+    gtr.className = 'group-row';
+    gtr.innerHTML = `
+      <td><span class="group-toggle${isCollapsed ? '' : ' expanded'}">▶</span></td>
+      <td colspan="4">
+        <span class="group-host">🖥 ${esc(host)}</span>
+        <button class="btn-focus-host" title="只看 ${esc(host)}" style="background:none;border:none;cursor:pointer;font-size:11px;padding:0 4px;opacity:0.4;" data-host="${esc(host)}">🎯</button>
+      </td>
+      <td colspan="2" style="text-align:right">
+        <span class="group-meta">请求数量: ${children.length}</span>
+      </td>
+    `;
+    gtr.addEventListener('click', (e) => {
+      // Focus button: set target host & enable scope
+      const focusBtn = e.target.closest('.btn-focus-host');
+      if (focusBtn) {
+        e.stopPropagation();
+        const h = focusBtn.dataset.host;
+        document.getElementById('filter-host').value = h;
+        scopeOn = true;
+        document.getElementById('btn-scope').classList.add('active-toggle');
+        document.getElementById('btn-scope').textContent = '🎯 已聚焦';
+        expandedHosts = {};
+        loadFlows();
+        return;
+      }
+      // Toggle collapse
+      if (e.target.closest('.group-row')) {
+        toggleHost(host);
+      }
+    });
+    tbody.appendChild(gtr);
+
+    // ---- Child rows ----
+    children.forEach((f, i) => {
+      const tr = document.createElement('tr');
+      tr.className = 'child-row' + (isCollapsed ? ' hidden' : '') + (f.id === selectedId ? ' selected' : '');
+      tr.dataset.host = host;
+
+      tr.innerHTML = `
+        <td></td>
+        <td>${f.id}</td>
+        <td><span class="method-badge method-${f.method}">${f.method}</span></td>
+        <td class="child-url" title="${esc(f.url)}">${esc(f.path)}</td>
+        <td class="${statusClass(f.status_code)}">${f.status_code ?? '—'}</td>
+        <td>${formatSize(f.response_length)}</td>
+        <td>${formatDuration(f.duration_ms)}</td>
+      `;
+
+      tr.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectFlow(f.id);
+      });
+      tbody.appendChild(tr);
+    });
+  });
+}
+
+function toggleHost(host) {
+  expandedHosts[host] = !expandedHosts[host];
+
+  // Toggle group toggle icon
+  const rows = tbody.querySelectorAll('tr');
+  let foundGroup = false;
+  rows.forEach(row => {
+    if (row.classList.contains('group-row') && row.querySelector('.group-host')?.textContent.includes(host)) {
+      foundGroup = true;
+      const toggle = row.querySelector('.group-toggle');
+      toggle.classList.toggle('expanded');
+    } else if (foundGroup && row.classList.contains('child-row') && row.dataset.host === host) {
+      row.classList.toggle('hidden');
+    } else if (foundGroup && row.classList.contains('group-row')) {
+      foundGroup = false; // reached next group
+    }
+  });
+}
+
+function statusClass(code) {
+  if (!code) return 'status-err';
+  if (code < 300) return 'status-2xx';
+  if (code < 400) return 'status-3xx';
+  if (code < 500) return 'status-4xx';
+  return 'status-5xx';
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '—';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function formatDuration(ms) {
+  if (ms == null) return '—';
+  if (ms < 1000) return Math.round(ms) + ' ms';
+  return (ms / 1000).toFixed(2) + ' s';
+}
+
+function esc(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---- Flow detail ----
+async function selectFlow(id) {
+  selectedId = id;
+  renderTable();
+  detailPanel.classList.add('open');
+
+  try {
+    const flow = await api('/api/flows/' + id);
+    if (currentTab === 'request') {
+      renderRequest(flow);
+    } else {
+      renderResponse(flow);
+    }
+  } catch (err) {
+    detailContent.textContent = '加载失败: ' + err.message;
+  }
+}
+
+function renderRequest(f) {
+  let lines = [];
+  lines.push(`<span class="req-line">${esc(f.method)} ${esc(f.path)} HTTP/1.1</span>`);
+  if (f.request_headers && typeof f.request_headers === 'object') {
+    for (const [k, v] of Object.entries(f.request_headers)) {
+      lines.push(`<span class="header-key">${esc(k)}:</span> <span class="header-val">${esc(v)}</span>`);
+    }
+  }
+  lines.push('');
+  if (f.request_body) {
+    lines.push(escBody(f.request_body, f.request_headers));
+  }
+  detailContent.innerHTML = lines.join('\n');
+}
+
+function renderResponse(f) {
+  let lines = [];
+  if (f.status_code) {
+    lines.push(`<span class="resp-line">HTTP/1.1 ${f.status_code}</span>`);
+  } else {
+    lines.push('<span class="resp-line">(No response)</span>');
+  }
+  if (f.response_headers && typeof f.response_headers === 'object') {
+    for (const [k, v] of Object.entries(f.response_headers)) {
+      lines.push(`<span class="header-key">${esc(k)}:</span> <span class="header-val">${esc(v)}</span>`);
+    }
+  }
+  lines.push('');
+  if (f.response_body) {
+    lines.push(escBody(f.response_body, f.response_headers, f.content_type));
+  }
+  detailContent.innerHTML = lines.join('\n');
+}
+
+function escBody(body, headers, contentType) {
+  let str = typeof body === 'string' ? body : JSON.stringify(body, null, 2);
+  const ct = contentType || getContentType(headers) || '';
+  if (ct.includes('json') || (str.trim().startsWith('{') || str.trim().startsWith('['))) {
+    try {
+      const parsed = typeof body === 'string' ? JSON.parse(body) : body;
+      str = JSON.stringify(parsed, null, 2);
+      return '<span style="color:#c0c0c0;">' + esc(str) + '</span>';
+    } catch (_) {}
+  }
+  return esc(str);
+}
+
+function getContentType(headers) {
+  if (!headers || typeof headers !== 'object') return '';
+  return headers['Content-Type'] || headers['content-type'] || '';
+}
+
+// ---- Tab switching ----
+document.querySelectorAll('.detail-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.detail-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentTab = btn.dataset.tab;
+    if (selectedId) selectFlow(selectedId);
+  });
+});
+
+// ---- Buttons ----
+document.getElementById('btn-refresh').addEventListener('click', loadFlows);
+
+document.getElementById('btn-expand-all').addEventListener('click', () => {
+  new Set(flows.map(f => f.host)).forEach(h => { expandedHosts[h] = true; });
+  renderTable();
+});
+
+document.getElementById('btn-collapse-all').addEventListener('click', () => {
+  expandedHosts = {};
+  renderTable();
+});
+
+document.getElementById('btn-scope').addEventListener('click', () => {
+  const host = document.getElementById('filter-host').value.trim();
+  if (!host && !scopeOn) {
+    alert('请先在"目标站点"输入框中填写域名');
+    return;
+  }
+  scopeOn = !scopeOn;
+  const btn = document.getElementById('btn-scope');
+  if (scopeOn) {
+    btn.classList.add('active-toggle');
+    btn.textContent = '🎯 已聚焦';
+  } else {
+    btn.classList.remove('active-toggle');
+    btn.textContent = '🎯 只看目标';
+  }
+  expandedHosts = {};
+  loadFlows();
+});
+
+// Also toggle scope when Enter is pressed in filter-host
+document.getElementById('filter-host').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const host = e.target.value.trim();
+    if (host) {
+      scopeOn = true;
+      document.getElementById('btn-scope').classList.add('active-toggle');
+      document.getElementById('btn-scope').textContent = '🎯 已聚焦';
+      expandedHosts = {};
+      loadFlows();
+    }
+  }
+});
+
+document.getElementById('btn-clear').addEventListener('click', async () => {
+  if (!confirm('确认删除所有记录？')) return;
+  await api('/api/flows', { method: 'DELETE' });
+  selectedId = null;
+  expandedHosts = {};
+  detailPanel.classList.remove('open');
+  await loadFlows();
+});
+
+document.getElementById('btn-close-detail').addEventListener('click', () => {
+  selectedId = null;
+  detailPanel.classList.remove('open');
+  renderTable();
+});
+
+document.getElementById('btn-curl').addEventListener('click', async () => {
+  if (!selectedId) return;
+  const data = await api('/api/flows/' + selectedId + '/curl');
+  await navigator.clipboard.writeText(data.curl);
+  flashBtn(document.getElementById('btn-curl'), '已复制');
+});
+
+document.getElementById('btn-copy-req').addEventListener('click', () => {
+  const text = detailContent.textContent || '';
+  navigator.clipboard.writeText(text);
+  flashBtn(document.getElementById('btn-copy-req'), '已复制');
+});
+
+function flashBtn(btn, msg) {
+  const orig = btn.textContent;
+  btn.textContent = '✓ ' + msg;
+  setTimeout(() => { btn.textContent = orig; }, 1500);
+}
+
+// ---- Filters ----
+['filter-search', 'filter-method', 'filter-status'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => {
+    expandedHosts = {}; // reset collapse on filter change
+    loadFlows();
+    selectedId = null;
+    detailPanel.classList.remove('open');
+  });
+});
+
+// ---- Keyboard shortcuts ----
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    selectedId = null;
+    detailPanel.classList.remove('open');
+    renderTable();
+  }
+  if (e.ctrlKey && e.key === 'r') {
+    e.preventDefault();
+    loadFlows();
+  }
+});
+
+// ---- Init ----
+loadFlows();
+autoRefresh = setInterval(loadFlows, 3000);
+</script>
+</body>
+</html>
