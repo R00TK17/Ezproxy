@@ -64,7 +64,7 @@ Options:
 │ 🔍 EzProxy  [filter URL...] [GET▼] [2xx▼] [target host] [🎯] ...  │
 ├─ Traffic Table ────────────────────────────────────────────────────┤
 │ ▶ 🖥 example.com 🎯                   请求数量: 5                  │
-│ ▶ 🖥 cdn.example.com                   请求数量: 12                 │
+│ ▶ 🖥 cdn.example.com                   请求数量: 12                │
 │   (collapsed by default — click to expand)                         │
 ├─ Detail Panel ─────────────────────────────────────────────────────┤
 │ [Request] [Response]                                               │
